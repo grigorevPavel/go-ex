@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>go-ex — архитектура торговой площадки ЦФА</title>
+  <style>
+    :root {
+      --bg: #0f1216;
+      --bg-2: #161b22;
+      --bg-3: #1c2330;
+      --line: #2b3340;
+      --text: #e7ecf2;
+      --muted: #8b95a4;
+      --accent: #6ea8fe;
+      --ok: #3dd68c;
+      --warn: #e3b341;
+      --bad: #f87171;
+      --eth: #627eea;
+      --fab: #2f6f4e;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif; }
+    button, select { font: inherit; color: inherit; }
+    a { color: var(--accent); }
+    .app { display: grid; grid-template-rows: auto auto 1fr; height: 100%; }
+    header {
+      display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
+      padding: 16px 20px 12px; border-bottom: 1px solid var(--line); background: var(--bg-2);
+    }
+    header h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .02em; }
+    header p { margin: 4px 0 0; color: var(--muted); max-width: 78ch; }
+    .tabs { display: flex; gap: 0; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
+    .tabs button {
+      background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+      padding: 10px 14px; cursor: pointer;
+    }
+    .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+    .stage { display: grid; grid-template-columns: 1fr 380px; min-height: 0; }
+    .stage.wide { grid-template-columns: 1fr; }
+    .stage.wide .side { display: none; }
+    .main { overflow: auto; padding: 16px 20px 28px; }
+    .side {
+      border-left: 1px solid var(--line); background: var(--bg-2); overflow: auto; padding: 16px 16px 28px;
+    }
+    .layer { margin-bottom: 14px; }
+    .layer h3 {
+      margin: 0 0 8px; font-size: 11px; font-weight: 650; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .08em;
+    }
+    .nodes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .node {
+      background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px;
+      padding: 8px 10px; min-width: 132px; cursor: pointer; user-select: none;
+    }
+    .node:hover { border-color: #4b5568; }
+    .node.on { border-color: var(--accent); background: #1a2740; }
+    .node.hl { border-color: var(--ok); background: #14261c; }
+    .node.dim { opacity: .28; }
+    .node .k { font-size: 11px; color: var(--muted); }
+    .node .n { font-weight: 650; }
+    .node[data-kind="chain"] { border-left: 3px solid var(--eth); }
+    .node[data-kind="fabric"] { border-left: 3px solid var(--fab); }
+    .node[data-kind="hot"] { border-left: 3px solid var(--warn); }
+    .node[data-kind="data"] { border-left: 3px solid #8b95a4; }
+    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 11px; margin: 0 0 14px; }
+    .legend span::before {
+      content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 6px;
+      border-radius: 2px; vertical-align: -1px; background: var(--line);
+    }
+    .legend .hot::before { background: var(--warn); }
+    .legend .fab::before { background: var(--fab); }
+    .legend .chain::before { background: var(--eth); }
+    .flows { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip {
+      background: var(--bg-3); border: 1px solid var(--line); border-radius: 999px;
+      padding: 5px 10px; cursor: pointer; color: var(--muted);
+    }
+    .chip.on { color: var(--text); border-color: var(--accent); }
+    .stepper { display: flex; align-items: center; gap: 8px; margin: 10px 0 14px; }
+    .stepper button {
+      background: var(--bg-3); border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; cursor: pointer;
+    }
+    .seq { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
+    .seq .s {
+      flex: 0 0 auto; background: var(--bg-3); border: 1px solid var(--line); border-radius: 4px;
+      padding: 6px 8px; min-width: 92px; cursor: pointer; color: var(--muted);
+    }
+    .seq .s.on { border-color: var(--ok); color: var(--text); }
+    .seq .s .i { font-size: 10px; color: var(--muted); }
+    h2 { font-size: 15px; margin: 0 0 8px; }
+    h4 { margin: 14px 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .kv { width: 100%; border-collapse: collapse; }
+    .kv td { padding: 5px 0; vertical-align: top; border-bottom: 1px solid var(--line); }
+    .kv td:first-child { color: var(--muted); width: 38%; padding-right: 8px; }
+    pre, code { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; }
+    pre {
+      background: #0c0f13; border: 1px solid var(--line); border-radius: 6px;
+      padding: 10px; overflow: auto; color: #d5dce6; white-space: pre-wrap;
+    }
+    .note { color: var(--muted); }
+    .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; color: var(--muted); font-size: 11px; }
+    .tree { white-space: pre; font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.55; }
+    .tree b { color: var(--accent); font-weight: 650; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 1100px) {
+      .stage { grid-template-columns: 1fr; }
+      .side { border-left: 0; border-top: 1px solid var(--line); }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+    .callout { border: 1px solid var(--line); background: var(--bg-3); border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>go-ex · торговая площадка ЦФА / HyperCore-модель</h1>
+        <p>Быстрый путь (матчинг) — Go in-memory. Юридически значимый стейт — Hyperledger Fabric. Деньги — USDT на Ethereum DepositoryVault. Кликни сервис или пройди флоу по шагам.</p>
+      </div>
+      <div class="note">клавиши: 1–6 вкладки · ← → шаг флоу</div>
+    </header>
+    <nav class="tabs" id="tabs"></nav>
+    <div class="stage" id="stage">
+      <div class="main" id="main"></div>
+      <aside class="side" id="side"></aside>
+    </div>
+  </div>
+<script>
+const NODES = {
+  web: { name: "Web Client", kind: "edge", layer: "Клиенты", k: "SPA", summary: "Стаканы, ордера, ввод/вывод, аналитика. Сессия JWT. Не ходит в матчинг напрямую." },
+  api: { name: "API Clients", kind: "edge", layer: "Клиенты", k: "HMAC keys", summary: "Программная торговля. Ключ + секрет, подпись запроса, отдельные rate limit buckets." },
+  lb: { name: "Load Balancer", kind: "edge", layer: "Edge", k: "L7 TLS", summary: "TLS termination, health checks, маршрутизация REST/WS. Matching Engine за LB не публикуется." },
+  gw: { name: "API Gateway", kind: "edge", layer: "Edge", k: "REST + WS", summary: "Auth, rate limit, валидация, идемпотентность, fan-out в gRPC сервисы. Stateless N реплик." },
+  auth: { name: "Auth", kind: "edge", layer: "Edge", k: "JWT / HMAC", summary: "Пользователи, API keys, RBAC. JWT для веба (stateless). HMAC как у биржевых API." },
+  matching: { name: "Matching Engine", kind: "hot", layer: "Домен (горячий путь)", k: "Go · in-memory", summary: "Единственный writer стакана на инструмент. Price-time FIFO. WAL + snapshot. Не ходит в Postgres на hot path." },
+  md: { name: "Market Data", kind: "hot", layer: "Домен (горячий путь)", k: "WS fan-out", summary: "Проекция L2/trades из Kafka/Redis. Горизонтально масштабируется. Не принимает ордера." },
+  ledger: { name: "Ledger Adapter", kind: "fabric", layer: "Домен (горячий путь)", k: "gRPC → Fabric", summary: "Единственная точка записи в Fabric. Идемпотентные батчи trades/balances. Лаг — причина halt." },
+  indexer: { name: "Deposit Indexer", kind: "chain", layer: "Домен (горячий путь)", k: "ETH listener", summary: "Сканирует Transfer USDT → vault. Курсор блока. Кредит только после N confirmations / finalized." },
+  withdraw: { name: "Withdrawal Worker", kind: "chain", layer: "Домен (горячий путь)", k: "FSM + HSM", summary: "Saga вывода: freeze в Fabric → подпись HSM → broadcast → confirm → finalize. Защита от double-spend." },
+  analytics: { name: "Analytics", kind: "data", layer: "Домен (горячий путь)", k: "consumers", summary: "OHLCV, оборот, PnL. Только Kafka/Postgres. Не влияет на торговлю." },
+  kafka: { name: "Kafka", kind: "data", layer: "Транспорт и кэш", k: "события", summary: "Шина: matching.events, ledger.commands, custody.events, md.ticks. Ключ партиции = instrument_id | account_id." },
+  redis: { name: "Redis", kind: "data", layer: "Транспорт и кэш", k: "лимиты / pubsub", summary: "Rate limit, last trade, L2 snapshot cache, pub/sub для WS. Не SoT денег." },
+  pg: { name: "Postgres", kind: "data", layer: "Системы записи", k: "проекция + FSM", summary: "Аккаунты, ключи, курсоры индексера, FSM выводов, query API. Primary + sync replica." },
+  fabric: { name: "Hyperledger Fabric", kind: "fabric", layer: "Системы записи", k: "valid state", summary: "Канон балансов и прав ЦФА. Channel trading. Orgs: Exchange, Auditor, Regulator. Не матчит ордера." },
+  vault: { name: "DepositoryVault", kind: "chain", layer: "Системы записи", k: "ERC-20 USDT", summary: "Ethereum-контракт депозитария. Deposit = transferIn. Withdraw только от signer (HSM)." },
+  eth: { name: "Ethereum", kind: "chain", layer: "Системы записи", k: "public L1", summary: "Рельс денег. Reorg-aware. Для крупных сумм — ждать finalized, не только N блоков." },
+  hsm: { name: "HSM / Signer", kind: "chain", layer: "Системы записи", k: "withdraw key", summary: "Подпись withdraw(). Ключ не на диске сервиса. Policy: whitelist, daily cap, dual control." },
+  obs: { name: "Observability", kind: "data", layer: "Наблюдаемость", k: "OTel", summary: "Логи Loki, метрики Prometheus/Grafana, ошибки Sentry, профили pprof, трейсы OTel." }
+};
+
+const LAYERS = [
+  "Клиенты", "Edge", "Домен (горячий путь)", "Транспорт и кэш", "Системы записи", "Наблюдаемость"
+];
+
+const PRINCIPLES = [
+  ["Горячий SoT стакана", "Matching Engine + WAL. Стакан не живёт в Fabric и не в Postgres."],
+  ["Юридический SoT денег/прав", "Fabric chaincode Account + Settlement. Биржа не «должна» пользователю вне Fabric-баланса."],
+  ["Денежный рельс", "Только USDT, только DepositoryVault. Биржа не кастодит произвольные EOA пользователей."],
+  ["Один writer на инструмент", "Active-passive matching shard. Два лидера = split brain. Fencing token обязателен."],
+  ["Идемпотентность", "client_order_id, tx_hash+log_index, withdrawal_id, fabric_tx_id = matching_seq диапазон."],
+  ["Halt по лагу", "Если Fabric или WAL отстают сверх SLA — торговля инструментом останавливается, не «торгуем в долг»."]
+];
+
+const FLOWS = {
+  deposit: {
+    title: "Депозит USDT",
+    goal: "Кредит на бирже только после достаточной финальности Ethereum и записи в Fabric.",
+    steps: [
+      { nodes: ["web", "gw", "auth", "pg"], title: "Привязка адреса", proto: "HTTPS REST",
+        call: "POST /api/v1/custody/addresses {chain: ETH, asset: USDT}",
+        data: "Postgres: account_id → deposit_from (whitelist). Пользователь шлёт USDT с этого адреса в vault.",
+        fail: "Gateway реплика упала — retry. Состояние в PG, дубль привязки уникален." },
+      { nodes: ["eth", "vault"], title: "Transfer on-chain", proto: "ERC-20 Transfer",
+        call: "USDT.transfer(DepositoryVault, amount)",
+        data: "Vault принимает USDT. Атрибуция депозита: from ∈ whitelist(account).",
+        fail: "Пользователь ошибся адресом — ручной reclaim процесс, не автокредит." },
+      { nodes: ["indexer", "eth", "pg"], title: "Индексация + confirmations", proto: "JSON-RPC",
+        call: "eth_getLogs Transfer(to=vault) from cursor+1",
+        data: "PG: deposits(tx_hash, log_index, amount, block, status=seen|confirming).",
+        fail: "Indexer crash: курсор last_block+log_index в PG. Повтор логов идемпотентен UNIQUE(tx_hash, log_index)." },
+      { nodes: ["indexer", "kafka"], title: "DepositConfirmed", proto: "Kafka",
+        call: "topic custody.deposits key=account_id",
+        data: "Событие только при confirmations ≥ N (или block finalized). Payload: tx_hash, amount, account_id.",
+        fail: "Kafka down: indexer не двигает курсор кредита, копит seen. Деньги on-chain в безопасности." },
+      { nodes: ["ledger", "fabric", "kafka"], title: "Credit в Fabric", proto: "gRPC → chaincode",
+        call: "Account.CreditDeposit(account, USDT, amount, eth_tx_id)",
+        data: "Fabric: available += amount. Event ledger.credits. Идемпотентность по eth_tx_id.",
+        fail: "Fabric peer down: endorsement на живых peers. Повтор invoke с тем же tx_id." },
+      { nodes: ["pg", "md", "web"], title: "Проекция баланса", proto: "Kafka → PG / WS user",
+        call: "private-balance update",
+        data: "PG balances — query path. WS user stream. Matching читает баланс из in-memory cache, инвалидация по событию.",
+        fail: "PG down: кредит уже в Fabric; API чтения деградирует, торговля может идти с cache+Fabric Get." }
+    ]
+  },
+  withdraw: {
+    title: "Вывод USDT",
+    goal: "Никогда не отправить on-chain дважды и никогда не отпустить токены без freeze в Fabric.",
+    steps: [
+      { nodes: ["web", "gw", "auth", "redis"], title: "Заявка + 2FA", proto: "HTTPS REST",
+        call: "POST /api/v1/custody/withdrawals {to, amount, idempotency_key}",
+        data: "Проверки: whitelist to, лимиты, 2FA. Rate limit Redis. Запись PG status=requested.",
+        fail: "Повтор с тем же idempotency_key возвращает ту же заявку." },
+      { nodes: ["ledger", "fabric"], title: "Freeze баланса", proto: "gRPC chaincode",
+        call: "Account.FreezeWithdraw(account, amount, withdrawal_id)",
+        data: "available -= x; held_withdraw += x. Без успешного freeze дальше FSM не идёт.",
+        fail: "Если freeze не прошёл — on-chain tx не создаётся." },
+      { nodes: ["withdraw", "pg"], title: "FSM: approved", proto: "internal",
+        call: "status requested → frozen → signing",
+        data: "Postgres — источник прогресса saga. Worker lease через SELECT FOR UPDATE SKIP LOCKED.",
+        fail: "Worker crash на любом шаге: другой worker берёт lease, смотрит status, не начинает с нуля." },
+      { nodes: ["withdraw", "hsm", "vault", "eth"], title: "Подпись и broadcast", proto: "HSM + eth_sendRawTransaction",
+        call: "DepositoryVault.withdraw(to, amount) nonce=N",
+        data: "Сначала сохранить tx_hash/raw+nonce в PG (signed), потом broadcast. Nonce-менеджер один на ключ.",
+        fail: "Crash после подписи до broadcast: при старте — eth_getTransaction / getTransactionCount. Повтор той же raw tx." },
+      { nodes: ["indexer", "eth", "withdraw"], title: "Подтверждения", proto: "JSON-RPC",
+        call: "следить tx_hash до N confirmations",
+        data: "status=confirming. Reorg до N → не finalize. Replacement tx только если nonce stuck policy.",
+        fail: "RPC down: вывод в очереди, freeze держится." },
+      { nodes: ["ledger", "fabric", "pg", "web"], title: "Finalize или refund", proto: "chaincode",
+        call: "Account.FinalizeWithdraw | UnfreezeRefund",
+        data: "Успех: held_withdraw -= x. Fail/timeout policy: refund в available после on-chain fail.",
+        fail: "Нельзя Unfreeze пока tx в mempool. Ручной ops runbook при unknown." }
+    ]
+  },
+  maker_place: {
+    title: "Создание maker-ордера",
+    goal: "Резерв средств и попадание в книгу только на лидере шарда. Fabric — асинхронный commit.",
+    steps: [
+      { nodes: ["web", "api", "lb", "gw", "auth", "redis"], title: "Приём", proto: "REST + HMAC/JWT",
+        call: "POST /api/v1/orders {instrument, side, type:LIMIT, tif:GTC, price, qty, client_order_id}",
+        data: "Gateway: схема, подпись, rate limit, дедуп client_order_id в Redis/PG.",
+        fail: "GW crash: клиент retry с тем же client_order_id." },
+      { nodes: ["gw", "matching"], title: "gRPC PlaceOrder", proto: "gRPC matching.v1",
+        call: "MatchingEngine.PlaceOrder",
+        data: "Один inflight pipeline на symbol: pre-risk → book insert → seq++ → WAL fsync → ack.",
+        fail: "Если лидер не тот: STALE_LEADER, клиент/gw ретраит на нового (watch fencing)." },
+      { nodes: ["matching"], title: "Pre-trade risk + книга", proto: "in-process",
+        call: "резерв available → held; insert price-time FIFO",
+        data: "In-memory balances = Fabric checkpoint + WAL delta. Ордер получает order_id, matching_seq.",
+        fail: "Недостаточно available — REJECT, WAL reject optional для аудита." },
+      { nodes: ["matching", "kafka"], title: "Публикация", proto: "Kafka matching.events",
+        call: "OrderAccepted + L2 delta",
+        data: "После WAL. Kafka — доставка, не SoT. Ключ = instrument_id, порядок seq монотонен в партиции.",
+        fail: "Kafka down: движок продолжает, outbox на диск, backpressure. MD отстаёт." },
+      { nodes: ["md", "redis", "web"], title: "Стакан клиенту", proto: "WS / Redis pubsub",
+        call: "l2.update",
+        data: "MD сервис не пересчитывает матчинг, только проецирует.",
+        fail: "MD replica down: другие реплики. Снимок из Redis/snapshot RPC." },
+      { nodes: ["ledger", "fabric"], title: "Commit прав/резерва", proto: "батч chaincode",
+        call: "Settlement.CommitOrderEvents(seq_from, seq_to, events[])",
+        data: "Не в критическом пути ack клиенту. SLA лага, иначе Halt(instrument).",
+        fail: "Повтор батча идемпотентен по seq." }
+    ]
+  },
+  maker_amend: {
+    title: "Изменение maker-ордера",
+    goal: "Атомарный cancel/replace в одном matching_seq, без потери приоритета только если цена/сторона те же и qty↑ по правилам площадки.",
+    steps: [
+      { nodes: ["gw", "matching"], title: "ReplaceOrder", proto: "gRPC",
+        call: "ReplaceOrder(order_id | client_order_id, new_price, new_qty)",
+        data: "В одном потоке символа: снять rest, пересчитать hold, вставить новый. Один ack.",
+        fail: "Частично исполнен: replace только remaining. Если new_qty < filled — REJECT." },
+      { nodes: ["matching"], title: "Приоритет", proto: "книга",
+        call: "price change → потеря времени; qty down same price → приоритет сохраняется (стандарт cash equity/CFA)",
+        data: "Явно зафиксировать правило в спецификации инструмента. Не смешивать с Binance amend.",
+        fail: "Нет такого ордера / не maker rest — REJECT." },
+      { nodes: ["kafka", "md", "ledger", "fabric"], title: "События", proto: "Kafka + Fabric batch",
+        call: "OrderReplaced + L2 delete/add",
+        data: "Два book-update, один seq. Проекции MD и Fabric.",
+        fail: "Как у place: WAL первичен." }
+    ]
+  },
+  maker_cancel: {
+    title: "Отмена maker-ордера",
+    goal: "Снять rest из книги и вернуть hold. Идемпотентная отмена.",
+    steps: [
+      { nodes: ["gw", "matching"], title: "CancelOrder", proto: "gRPC",
+        call: "DELETE /api/v1/orders/{id} → CancelOrder",
+        data: "Если уже filled/cancelled — ACK идемпотентный CANCELED.",
+        fail: "In-flight fill раньше cancel в том же потоке: cancel remaining=0 → filled win." },
+      { nodes: ["matching"], title: "Unhold", proto: "in-memory",
+        call: "held → available на remaining * px (buy) / remaining (sell)",
+        data: "WAL Cancel. seq++.",
+        fail: "Движок упал до WAL: после replay ордер снова в книге — клиент retry cancel." },
+      { nodes: ["kafka", "md", "ledger", "fabric"], title: "Проекции", proto: "Kafka / chaincode",
+        call: "OrderCanceled",
+        data: "L2, user WS, Fabric event log.",
+        fail: "Повтор cancel безопасен." }
+    ]
+  },
+  taker: {
+    title: "Taker-ордер (исполнение)",
+    goal: "Матчинг полностью в Go. Сделки пачкой в Fabric как канон перехода прав.",
+    steps: [
+      { nodes: ["gw", "matching"], title: "Place IOC/MARKET", proto: "gRPC PlaceOrder",
+        call: "type=MARKET|LIMIT IOC/FOK",
+        data: "FOK: либо полный fill, либо noop. IOC: fill сколько есть, rest cancel.",
+        fail: "Reject при нарушении price band / notional / halt." },
+      { nodes: ["matching"], title: "Match FIFO", proto: "in-memory book",
+        call: "пройти уровни, генерировать Trade{maker,taker,px,qty,seq}",
+        data: "Атомарно: балансы обоих, rest maker, possibly remove level. Один поток символа = без locks на книгу.",
+        fail: "Падение mid-match до WAL: весь команда не закоммичена, replay не применит. Group-commit WAL на команду." },
+      { nodes: ["matching", "kafka"], title: "Trades + L2 + user fills", proto: "Kafka",
+        call: "TradeExecuted[], OrderFilled, L2",
+        data: "Публичные сделки без имён; приватные fills в user topic / WS.",
+        fail: "MD может отстать, учёт уже в WAL." },
+      { nodes: ["ledger", "fabric"], title: "Settlement batch", proto: "chaincode Settlement.CommitTrades",
+        call: "перенос прав ЦФА и USDT между account_id",
+        data: "Валидный стейт для аудитора/регулятора. matching_seq диапазон.",
+        fail: "Лаг > порога → Halt matching ingest. Догон батчами, не skip seq." },
+      { nodes: ["pg", "analytics", "web"], title: "Проекции и аналитика", proto: "consumers",
+        call: "trades, ohlcv, fees",
+        data: "PG/аналитика eventual. Не блочат ack taker (ack после WAL).",
+        fail: "Аналитика down — торговля жива." }
+    ]
+  },
+  recover_matching: {
+    title: "Падение Matching Engine",
+    goal: "Безопасный старт: fencing → snapshot+WAL → сверка с Fabric → только потом ingest.",
+    steps: [
+      { nodes: ["matching"], title: "Обнаружение", proto: "health / lease",
+        call: "etcd/consul lease expired или k8s liveness",
+        data: "Ingest останавливается автоматически: gw видит no leader.",
+        fail: "Старый процесс «ожил»: fencing token в WAL меньше текущего — отказ писать." },
+      { nodes: ["matching"], title: "Выбор лидера", proto: "lease + fencing",
+        call: "CAS leader(instrument)=pod, token=T+1",
+        data: "Один лидер на shard. Standby грузит снапшот в фоне.",
+        fail: "Split brain запрещён жёстче, чем downtime." },
+      { nodes: ["matching"], title: "Replay", proto: "snapshot + WAL",
+        call: "load snapshot seq=S; replay WAL S+1..end; fsync",
+        data: "Книга, балансы hot, seq. Как Redis/Aeron: snapshot периодический, WAL — каждая команда.",
+        fail: "Битый WAL — не стартовать. Алерт Sev-1. Восстановление из Fabric+последнего валидного snapshot — runbook, не автомат." },
+      { nodes: ["ledger", "fabric", "kafka"], title: "Сверка", proto: "GetCheckpoint",
+        call: "fabric_last_seq vs local_seq",
+        data: "local ≥ fabric: дослать батчи. local < fabric: HALT, ручная сверка (этого не должно быть).",
+        fail: "Пока не ok — PlaceOrder = 503 ENGINE_RECOVERING." },
+      { nodes: ["gw", "matching"], title: "Открытие ingest", proto: "gRPC health READY",
+        call: "готов принимать, дубли client_order_id из recovered index",
+        data: "Клиенты retry in-doubt ордеров по client_order_id.",
+        fail: "Открыть ingest до сверки = риск двойного исполнения. Запрещено." }
+    ]
+  },
+  recover_indexer: {
+    title: "Падение Deposit Indexer",
+    goal: "Ни один депозит не потерять и не зачислить дважды, корректно пережить reorg.",
+    steps: [
+      { nodes: ["indexer", "pg"], title: "Курсор", proto: "PG",
+        call: "read cursor(block, log_index)",
+        data: "При старте rewind на reorg_depth блоков от курсора, перескан.",
+        fail: "Курсор вперёд без кредита запрещён." },
+      { nodes: ["eth", "indexer"], title: "Reorg", proto: "JSON-RPC",
+        call: "сравнить block hash на cursor-N",
+        data: "Статусы seen на нестабильных блоках не кредитуются. Credit только finalized/N conf.",
+        fail: "Зачислили и reorg: не должно случиться из-за порога. Если случилось — Sev-1, Fabric reverse только ops." }
+    ]
+  }
+};
+
+const PROTOS = {
+  matching: `service MatchingEngine {
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderAck);
+  rpc ReplaceOrder(ReplaceOrderRequest) returns (PlaceOrderAck);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelAck);
+  rpc GetSnapshot(SnapshotRequest) returns (EngineSnapshot);
+}
+message PlaceOrderRequest {
+  string account_id;
+  string instrument_id;
+  Side side;             // BID | ASK
+  OrderType type;        // LIMIT | MARKET
+  TimeInForce tif;       // GTC | IOC | FOK
+  string price;          // decimal string
+  string qty;
+  string client_order_id;
+  uint64 fencing_token;
+}`,
+  ledger: `service Ledger {
+  rpc CreditDeposit(CreditDepositRequest) returns (LedgerAck);
+  rpc FreezeWithdraw(FreezeWithdrawRequest) returns (LedgerAck);
+  rpc FinalizeWithdraw(FinalizeWithdrawRequest) returns (LedgerAck);
+  rpc CommitTradeBatch(TradeBatch) returns (LedgerAck);
+  rpc GetCheckpoint(InstrumentId) returns (Checkpoint);
+}
+message TradeBatch {
+  string instrument_id;
+  uint64 seq_from;
+  uint64 seq_to;
+  repeated Trade trades;
+  repeated OrderEvent orders;
+}`,
+  custody: `service Custody {
+  rpc BindDepositAddress(BindAddressRequest) returns (BindAddressAck);
+  rpc RequestWithdrawal(WithdrawRequest) returns (WithdrawAck);
+}
+// Ethereum
+// DepositoryVault.withdraw(address to, uint256 amount) onlySigner
+// USDT.transfer(vault, amount) → Deposit Indexer`,
+  public: `POST   /api/v1/orders
+PUT    /api/v1/orders/{id}
+DELETE /api/v1/orders/{id}
+GET    /api/v1/markets/{id}/orderbook?depth=50
+GET    /api/v1/accounts/me
+POST   /api/v1/custody/addresses
+POST   /api/v1/custody/withdrawals
+GET    /api/v1/analytics/ohlcv
+WS     /ws/v1/market   (l2, trades)
+WS     /ws/v1/user     (orders, fills, balances)
+
+Headers API-key:
+  X-Key, X-Ts, X-Sign = HMAC_SHA256(secret, ts+method+path+body)`
+};
+
+const STRUCTS = [
+  ["AccountBalance", "account_id, asset (USDT|CFA_id), available, held_orders, held_withdraw, ledger_seq"],
+  ["Order", "order_id, client_order_id, account_id, instrument_id, side, type, tif, price, qty, remaining, status, matching_seq, ts_ns"],
+  ["Trade", "trade_id, instrument_id, maker_order_id, taker_order_id, price, qty, matching_seq, ts_ns"],
+  ["Deposit", "tx_hash, log_index, from, amount, block_number, confirmations, status, fabric_tx_id"],
+  ["Withdrawal", "withdrawal_id, account_id, to, amount, status(FSM), nonce, tx_hash, fabric_tx_id"],
+  ["Instrument", "id, base (CFA), quote (USDT), tick, lot, price_band, status(trading|halt)"],
+  ["MatchingSeq", "instrument_id, seq uint64 — монотонный id команды; ключ сверки с Fabric"],
+  ["EngineSnapshot", "seq, books[], balances_delta[], leader_token, hash"]
+];
+
+const FAILURES = [
+  { id: "matching", svc: "Matching Engine",
+    impact: "Нет новых ордеров/сделок по шарду. Открытые ордера «заморожены» в книге до подъёма.",
+    stays: "Просмотр старых проекций MD/PG. Депозиты копятся в indexer. Выводы (не зависящие от книги) могут идти.",
+    start: "Fencing → snapshot+WAL → seq ≥ Fabric checkpoint → health READY. Иначе 503.",
+    data: "WAL fsync на команду. Два активных лидера запрещены." },
+  { id: "gw", svc: "API Gateway",
+    impact: "Часть HTTP/WS 502. Движок жив.",
+    stays: "N реплик за LB. Matching не затронут.",
+    start: "Stateless, просто новые поды. In-doubt ордера: клиент retry client_order_id.",
+    data: "Нет локального стейта." },
+  { id: "auth", svc: "Auth",
+    impact: "Новые сессии/подписи. Уже выданные JWT живут до exp, если проверка локальная (JWKS cache).",
+    stays: "Кэш JWKS на gw. Fail-closed на истекшем кэше для trading.",
+    start: "PG primary для ключей. Ротация ключей — отдельный runbook.",
+    data: "Секреты API только hash; raw secret показывается один раз." },
+  { id: "md", svc: "Market Data",
+    impact: "Стакан в UI отстаёт/пусто. Торговля через REST жива.",
+    stays: "Другие реплики + Redis snapshot.",
+    start: "Snapshot RPC к matching или replay Kafka from latest snapshot offset.",
+    data: "Не SoT." },
+  { id: "ledger", svc: "Ledger Adapter",
+    impact: "Растёт лаг Fabric. По порогу — Halt ingest matching.",
+    stays: "Книга в памяти продолжает существовать, но при Halt не принимает команды.",
+    start: "Kafka consumer group, commit offset после успешного Fabric tx_id=seq_range.",
+    data: "Идемпотентные батчи." },
+  { id: "fabric", svc: "Hyperledger Fabric",
+    impact: "Нет settlement/депозит-кредит/freeze вывода. Торговлю halt.",
+    stays: "Peers/orderer quorum. Чтение с других peers.",
+    start: "Не переигрывать seq. Endorsement policy AND(Exchange, Auditor) для денег.",
+    data: "Канон балансов. Backup orderer, PVC, channel snapshots." },
+  { id: "indexer", svc: "Deposit Indexer",
+    impact: "Зачисление задерживается. Средства уже в vault.",
+    stays: "On-chain баланс vault цел.",
+    start: "Курсор PG, rewind reorg_depth, UNIQUE tx_hash+log_index.",
+    data: "Никогда не кредитовать до N conf." },
+  { id: "withdraw", svc: "Withdrawal Worker",
+    impact: "Выводы стоят в FSM. Freeze уже держится.",
+    stays: "Торговля. Депозиты.",
+    start: "Lease row. Если status=signed — rebroadcast той же raw tx, не новую.",
+    data: "Nonce менеджер — singleton на ключ (или HSM policy)." },
+  { id: "hsm", svc: "HSM / Signer",
+    impact: "Новые выводы невозможны.",
+    stays: "Торговля, депозиты.",
+    start: "Не fallback на ключ с диска. Dual control.",
+    data: "Ключ не экспортируется в pod." },
+  { id: "kafka", svc: "Kafka",
+    impact: "MD/аналитика/ledger adapter отстают. Matching пишет WAL.",
+    stays: "Ack ордеров после WAL. При заполнении outbox — backpressure/Halt.",
+    start: "RF≥3, min ISR. Matching догоняет outbox.",
+    data: "Не SoT денег и не SoT книги." },
+  { id: "pg", svc: "Postgres",
+    impact: "API ключи, FSM выводов, курсор депозитов, query history.",
+    stays: "Matching hot path без PG. JWT ещё валидны.",
+    start: "Failover на sync replica. Matching не ждать PG.",
+    data: "Primary + sync standby. PITR." },
+  { id: "redis", svc: "Redis",
+    impact: "Rate limit и WS fan-out.",
+    stays: "Trading: fail-closed лимиты (отказать) лучше, чем безлимит. Auth JWT без Redis.",
+    start: "Redis Cluster/Sentinel. Локальный token bucket на gw как degraded.",
+    data: "Не SoT." },
+  { id: "eth", svc: "Ethereum RPC / L1",
+    impact: "Депозиты и выводы ждут.",
+    stays: "Внутренняя торговля ЦФА/USDT на балансах Fabric.",
+    start: "Мульти-RPC (Alchemy+свой node). Не менять vault address.",
+    data: "Finality policy отдельно от N conf." },
+  { id: "obs", svc: "Observability",
+    impact: "Слепые зоны, не остановка торговли.",
+    stays: "Все доменные сервисы.",
+    start: "Локальный буфер OTel. pprof на :6060 внутренний.",
+    data: "Логи без секретов и без полных PII." }
+];
+
+const REPO = `go-ex/
+├── proto/
+│   ├── matching/v1/matching.proto
+│   ├── ledger/v1/ledger.proto
+│   ├── custody/v1/custody.proto
+│   ├── marketdata/v1/md.proto
+│   └── common/v1/types.proto
+├── contracts/ethereum/DepositoryVault.sol
+├── chaincode/
+│   ├── account/      CreditDeposit, FreezeWithdraw, GetBalance
+│   ├── settlement/   CommitTradeBatch, CommitOrderEvents
+│   └── depositary/   BindEthTx, audit metadata
+├── services/
+│   ├── api-gateway/          REST/WS, authn, ratelimit
+│   ├── matching-engine/      book, wal, leader, gRPC
+│   ├── ledger-adapter/       Kafka → Fabric
+│   ├── deposit-indexer/      eth logs → Kafka
+│   ├── withdrawal-worker/    FSM + HSM
+│   ├── market-data/          WS fan-out
+│   ├── analytics/            ohlcv consumers
+│   └── auth/                 users, api keys
+├── pkg/
+│   ├── orderbook/            FIFO levels
+│   ├── wal/                  snapshot + journal
+│   ├── decimal/              money (не float)
+│   ├── kafka/ hmac/ otel/ fencing/
+├── web/                      SPA стакан / ордера
+├── deploy/
+│   ├── k8s/ helm
+│   ├── fabric/ network + channel
+│   └── grafana/ dashboards + alerts
+└── tests/
+    ├── unit/                 book, risk, fsm
+    ├── integration/          testcontainers kafka/pg/fabric
+    └── load/                 k6 / vegeta matching ingest`;
+
+const PATTERNS = [
+  ["Single-threaded actor на символ", "Как LMAX Disruptor / типичный matching: без lock на книгу, очередь команд."],
+  ["WAL + snapshot", "Как биржевые движки и Aeron: ack клиенту после fsync WAL, не после Fabric."],
+  ["CQRS / projections", "WAL → Kafka → PG, Redis, MD, Fabric. Чтения API не бьют в движок, кроме snapshot ops."],
+  ["Transactional outbox", "Движок пишет WAL; publisher шлёт Kafka. Offset = seq."],
+  ["Saga + state machine", "Вывод: requested → frozen → signed → broadcast → confirming → done|refund."],
+  ["Idempotency keys", "Ордер, депозит, вывод, Fabric batch."],
+  ["Leader fencing", "Токен в каждом PlaceOrder и в WAL. Старый лидер отвергается."],
+  ["Outbox/inbox exactly-once", "Kafka + unique constraints + Fabric txid."],
+  ["Price-time priority", "FIFO внутри цены. Не pro-rata (это не фьючерсный пул)."],
+  ["Fail-closed деньги", "Нет Fabric freeze — нет withdraw tx. Нет сверки seq — нет ingest."]
+];
+
+const OBS = {
+  metrics: [
+    "matching_seq_lag_vs_fabric", "matching_cmd_latency_us{p50,p99}", "book_levels", "orders_in_book",
+    "kafka_outbox_depth", "deposit_confirmations_delay_s", "withdraw_fsm_age_s",
+    "gw_http_rps", "rate_limit_rejects", "eth_rpc_errors", "fabric_endorse_ms"
+  ],
+  logs: "JSON → Promtail → Loki. Correlation: trace_id, matching_seq, account_id (hashed), client_order_id.",
+  sentry: "Паники, HSM errors, WAL CRC, Fabric endorsement fail, unknown withdraw nonce. Не спамить reject ордеров.",
+  grafana: "SLO: ingest p99 < 10ms внутри ДЦ; Fabric lag < 2s; deposit credit after finality < 2 blocks+indexer; zero double withdraw.",
+  pprof: "matching-engine /debug/pprof всегда включён на internal. Алерты на goroutines, heap, mutex.",
+  tests: "Unit: книга, риск, decimal, FSM вывода. Integration: testcontainers (PG, Kafka, mock eth, fabric-sample). Load: один символ, целевой ingest и проверка seq без дыр. Chaos: kill leader, kill indexer mid-credit, replay identical withdraw raw tx."
+};
+
+const TABS = [
+  { id: "arch", label: "1. Верхняя схема" },
+  { id: "flow", label: "2. Флоу" },
+  { id: "data", label: "3. Данные и API" },
+  { id: "fail", label: "4. Отказы" },
+  { id: "repo", label: "5. Монорепо" },
+  { id: "obs", label: "6. Наблюдаемость" }
+];
+
+let tab = "arch";
+let selected = "matching";
+let flowId = "deposit";
+let step = 0;
+
+function el(id) { return document.getElementById(id); }
+
+function renderTabs() {
+  el("tabs").innerHTML = TABS.map(t =>
+    `<button data-tab="${t.id}" class="${t.id===tab?"on":""}">${t.label}</button>`
+  ).join("");
+}
+
+function nodeCard(id) {
+  const n = NODES[id];
+  const flow = FLOWS[flowId];
+  const active = tab === "flow" ? (flow.steps[step].nodes || []) : [];
+  const hl = tab === "flow" && active.includes(id);
+  const dim = tab === "flow" && active.length && !active.includes(id);
+  const on = tab !== "flow" && selected === id;
+  return `<div class="node ${on?"on":""} ${hl?"hl":""} ${dim?"dim":""}" data-node="${id}" data-kind="${n.kind}">
+    <div class="k">${n.k}</div><div class="n">${n.name}</div>
+  </div>`;
+}
+
+function diagram() {
+  return `<div class="legend">
+    <span class="hot">горячий путь Go</span>
+    <span class="fab">Fabric valid state</span>
+    <span class="chain">Ethereum / custody</span>
+  </div>` + LAYERS.map(layer => {
+    const ids = Object.keys(NODES).filter(id => NODES[id].layer === layer);
+    return `<div class="layer"><h3>${layer}</h3><div class="nodes">${ids.map(nodeCard).join("")}</div></div>`;
+  }).join("");
+}
+
+function inspectorNode(id) {
+  const n = NODES[id];
+  const f = FAILURES.find(x => x.id === id);
+  return `<h2>${n.name}</h2>
+    <p>${n.summary}</p>
+    <h4>Слой</h4><p>${n.layer} · ${n.k}</p>
+    ${f ? `<h4>Если упадёт</h4>
+      <table class="kv">
+        <tr><td>Импакт</td><td>${f.impact}</td></tr>
+        <tr><td>Что живёт</td><td>${f.stays}</td></tr>
+        <tr><td>Старт</td><td>${f.start}</td></tr>
+        <tr><td>Данные</td><td>${f.data}</td></tr>
+      </table>` : `<p class="note">Отказоустойчивость — во вкладке «Отказы».</p>`}
+    <h4>Связанные флоу</h4>
+    <p>${Object.entries(FLOWS).filter(([,fl]) => fl.steps.some(s => s.nodes.includes(id)))
+      .map(([k,fl]) => `<span class="chip" data-goflow="${k}">${fl.title}</span>`).join(" ") || "—"}</p>`;
+}
+
+function inspectorStep() {
+  const fl = FLOWS[flowId];
+  const s = fl.steps[step];
+  return `<h2>${fl.title}</h2>
+    <p class="note">${fl.goal}</p>
+    <h4>Шаг ${step+1} / ${fl.steps.length} — ${s.title}</h4>
+    <table class="kv">
+      <tr><td>Протокол</td><td>${s.proto}</td></tr>
+      <tr><td>Вызов</td><td><code>${s.call}</code></td></tr>
+      <tr><td>Данные</td><td>${s.data}</td></tr>
+      <tr><td>Падение здесь</td><td>${s.fail}</td></tr>
+      <tr><td>Участники</td><td>${s.nodes.map(id => NODES[id].name).join(" → ")}</td></tr>
+    </table>`;
+}
+
+function renderArch() {
+  el("stage").className = "stage";
+  el("main").innerHTML = `<h2>Контейнеры системы</h2>
+    <p class="note">Модель как у площадки ЦФА / Hyperliquid: исполнение быстро на бэкенде, валидный стейт в собственном леджере, фиатный/крипто-рельс отдельно. Не клон CEX-монолита.</p>
+    <div class="grid-2" style="margin-bottom:14px">
+      ${PRINCIPLES.map(([t,d]) => `<div class="callout"><b>${t}</b><div class="note">${d}</div></div>`).join("")}
+    </div>
+    ${diagram()}`;
+  el("side").innerHTML = inspectorNode(selected);
+}
+
+function renderFlow() {
+  el("stage").className = "stage";
+  const fl = FLOWS[flowId];
+  el("main").innerHTML = `<h2>Функциональные флоу</h2>
+    <div class="flows">${Object.entries(FLOWS).map(([k,v]) =>
+      `<button class="chip ${k===flowId?"on":""}" data-flow="${k}">${v.title}</button>`).join("")}</div>
+    <div class="stepper">
+      <button data-act="prev">←</button>
+      <button data-act="next">→</button>
+      <span class="note">шаг ${step+1} из ${fl.steps.length}</span>
+    </div>
+    <div class="seq">${fl.steps.map((s,i) =>
+      `<div class="s ${i===step?"on":""}" data-step="${i}"><div class="i">${i+1}</div>${s.title}</div>`).join("")}</div>
+    ${diagram()}`;
+  el("side").innerHTML = inspectorStep();
+}
+
+function renderData() {
+  el("stage").className = "stage";
+  el("main").innerHTML = `<h2>Структуры и контракты</h2>
+    <p class="note">Деньги и цены — decimal string / integer ticks. Не float64.</p>
+    <table class="kv">${STRUCTS.map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
+    <h4>Паттерны (не изобретать)</h4>
+    <table class="kv">${PATTERNS.map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("")}</table>
+    <h4>Публичное API</h4>
+    <pre>${PROTOS.public}</pre>`;
+  el("side").innerHTML = `<h2>Внутренние protobuf / gRPC</h2>
+    <h4>matching.v1</h4><pre>${PROTOS.matching}</pre>
+    <h4>ledger.v1</h4><pre>${PROTOS.ledger}</pre>
+    <h4>custody</h4><pre>${PROTOS.custody}</pre>`;
+}
+
+function renderFail() {
+  el("stage").className = "stage";
+  el("main").innerHTML = `<h2>Отказ каждого сервиса</h2>
+    <p class="note">Цель: биржа либо продолжает безопасное подмножество, либо честно Halt. Запрещено «тихо торговать» без канона денег.</p>
+    ${FAILURES.map(f => `<div class="callout" data-node="${f.id}" style="cursor:pointer">
+      <b>${f.svc}</b>
+      <table class="kv">
+        <tr><td>Импакт</td><td>${f.impact}</td></tr>
+        <tr><td>Что сохраняется</td><td>${f.stays}</td></tr>
+        <tr><td>Безопасный старт</td><td>${f.start}</td></tr>
+        <tr><td>Данные</td><td>${f.data}</td></tr>
+      </table>
+    </div>`).join("")}`;
+  el("side").innerHTML = `<h2>Общие правила восстановления</h2>
+    <ol>
+      <li>Fencing до replay.</li>
+      <li>Replay до готовности, ingest закрыт.</li>
+      <li>Сверка matching_seq с Fabric.</li>
+      <li>Идемпотентный догон Kafka/ETH курсоров.</li>
+      <li>Выводы: никогда новая tx на тот же withdrawal_id.</li>
+      <li>Депозиты: UNIQUE(tx_hash, log_index).</li>
+      <li>Если local_seq &lt; fabric_seq — не стартовать автоматически.</li>
+    </ol>
+    <div class="callout"><b>RTO ориентиры (учебный prod-профиль)</b>
+      <div class="note">GW/MD: секунды. Matching leader: десятки секунд (replay WAL). Indexer: сразу, лаг = время простоя. Fabric quorum: минуты. HSM: пока не поднят — выводы стоят.</div>
+    </div>`;
+}
+
+function renderRepo() {
+  el("stage").className = "stage wide";
+  el("main").innerHTML = `<h2>Монорепо</h2>
+    <p class="note">Один репозиторий, отдельные deployable binaries. Chaincode и Solidity — не в runtime-образах matching.</p>
+    <div class="tree">${REPO.replace(/[A-Za-z0-9_./|{}\[\]()+,-]+/g, (m) => {
+      if (["go-ex/", "proto/", "services/", "chaincode/", "pkg/", "web/", "deploy/", "tests/", "contracts/"].some(p => m.startsWith(p) && m.endsWith("/"))) {
+        return `<b>${m}</b>`;
+      }
+      return m;
+    })}</div>
+    <h4>Границы пакетов</h4>
+    <table class="kv">
+      <tr><td>services/*</td><td>только composition root, без чужого домена</td></tr>
+      <tr><td>pkg/orderbook</td><td>чистая память, без Kafka/PG — легко тестировать</td></tr>
+      <tr><td>pkg/wal</td><td>append-only, CRC, snapshot hash</td></tr>
+      <tr><td>proto/</td><td>единственный контракт между сервисами</td></tr>
+      <tr><td>web/</td><td>только публичное REST/WS</td></tr>
+    </table>`;
+  el("side").innerHTML = "";
+}
+
+function renderObs() {
+  el("stage").className = "stage";
+  el("main").innerHTML = `<h2>Логи, метрики, инциденты</h2>
+    <div class="callout"><b>Стек</b><div>OpenTelemetry SDK в каждом Go-сервисе → Prometheus + Loki + Tempo/Jaeger. Grafana дашборды. Sentry — ошибки. pprof — CPU/heap matching и gw.</div></div>
+    <h4>Красные метрики</h4>
+    <p>${OBS.metrics.map(m => `<code class="pill">${m}</code>`).join(" ")}</p>
+    <h4>Логи (Loki)</h4><p class="note">${OBS.logs}</p>
+    <h4>Sentry</h4><p class="note">${OBS.sentry}</p>
+    <h4>Grafana SLO</h4><p class="note">${OBS.grafana}</p>
+    <h4>pprof</h4><p class="note">${OBS.pprof}</p>
+    <h4>Тесты (перспектива)</h4><p class="note">${OBS.tests}</p>`;
+  el("side").innerHTML = `<h2>Алерты Sev-1</h2>
+    <ul>
+      <li>Два лидера matching (не должно)</li>
+      <li>WAL CRC / отказ fsync</li>
+      <li>Fabric lag &gt; SLA</li>
+      <li>Withdraw stuck in signed &gt; N min</li>
+      <li>Double credit попытка (unique violation) — исследовать, не глотать</li>
+      <li>local_seq &lt; fabric_seq</li>
+    </ul>
+    <div class="callout"><b>Доступность</b>
+      <div class="note">GW/Auth/MD: HPA, 2+ AZ. Matching: active-passive на AZ. Kafka RF3. PG sync replica. Fabric: 2+ peers/org, orderer raft. Eth: 2 провайдера RPC.</div>
+    </div>`;
+}
+
+function render() {
+  renderTabs();
+  if (tab === "arch") renderArch();
+  if (tab === "flow") renderFlow();
+  if (tab === "data") renderData();
+  if (tab === "fail") renderFail();
+  if (tab === "repo") renderRepo();
+  if (tab === "obs") renderObs();
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-tab],[data-node],[data-flow],[data-step],[data-act],[data-goflow]");
+  if (!t) return;
+  if (t.dataset.tab) { tab = t.dataset.tab; render(); }
+  if (t.dataset.node) { selected = t.dataset.node; if (tab === "arch") render(); if (tab === "flow") { /* keep */ } }
+  if (t.dataset.flow) { flowId = t.dataset.flow; step = 0; render(); }
+  if (t.dataset.goflow) { tab = "flow"; flowId = t.dataset.goflow; step = 0; render(); }
+  if (t.dataset.step) { step = +t.dataset.step; render(); }
+  if (t.dataset.act === "prev") { step = Math.max(0, step - 1); render(); }
+  if (t.dataset.act === "next") { step = Math.min(FLOWS[flowId].steps.length - 1, step + 1); render(); }
+});
+
+document.addEventListener("keydown", (e) => {
+  const n = +e.key;
+  if (n >= 1 && n <= 6) { tab = TABS[n-1].id; render(); }
+  if (tab !== "flow") return;
+  if (e.key === "ArrowRight") { step = Math.min(FLOWS[flowId].steps.length - 1, step + 1); render(); }
+  if (e.key === "ArrowLeft") { step = Math.max(0, step - 1); render(); }
+});
+
+render();
+</script>
+</body>
+</html>
