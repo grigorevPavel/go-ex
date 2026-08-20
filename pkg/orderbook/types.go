@@ -74,11 +74,14 @@ type OrderNode struct {
 }
 
 type OrderBookLevel struct {
-	head     *OrderNode      // link to first order
-	tail     *OrderNode      // link to last order
-	totalQty Qty             // total quantity of orders at this level
-	prev     *OrderBookLevel // link to previous level
-	next     *OrderBookLevel // link to next level
+	head      *OrderNode      // link to first order
+	tail      *OrderNode      // link to last order
+	totalQty  Qty             // total quantity of orders at this level
+	prev      *OrderBookLevel // link to previous level
+	next      *OrderBookLevel // link to next level
+	ordersCnt uint64          // number of orders at this level
+	side      Side            // side of the level
+	price     Price           // price of the level (used for best level tracking)
 }
 
 type OrderBookLevels map[Price]*OrderBookLevel
@@ -91,6 +94,7 @@ type OrderBook struct {
 	TotalBidQty  Qty
 	TotalAskQty  Qty
 	Registry     OrderRegistry
+	NextTradeID  TradeID
 }
 
 type OrderRegistry map[OrderID]*OrderNode
@@ -111,10 +115,6 @@ type PlaceOrderResult struct {
 	Resting      bool // true if the order is still resting in the order book
 }
 
-type MatchResult struct {
-	Trades []Trade
-}
-
 type CancelOrderParams struct {
 	ID OrderID
 }
@@ -132,4 +132,18 @@ type ReplaceOrderParams struct {
 
 type ReplaceOrderResult struct {
 	PlaceOrderResult // embed PlaceOrderResult to reuse the fields
+}
+
+type MatchParams struct {
+	OrderID OrderID
+	Side    Side
+	Type    OrderType
+	TIF     TIF
+	Price   Price
+	Qty     Qty
+}
+
+type MatchResult struct {
+	Trades       []Trade
+	RemainingQty Qty
 }
