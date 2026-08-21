@@ -99,7 +99,7 @@ func (ob *OrderBook) unlinkOrder(level *OrderBookLevel, order *OrderNode) {
 		ob.TotalBidQty -= order.Remaining
 	} else {
 		ob.TotalAskQty -= order.Remaining
-	} 
+	}
 
 	// unregister order
 	delete(ob.Registry, order.ID)
@@ -107,6 +107,14 @@ func (ob *OrderBook) unlinkOrder(level *OrderBookLevel, order *OrderNode) {
 	// if level is empty, remove it
 	if level.ordersCnt == 0 {
 		ob.unlinkLevel(level) // checked ordersCnt == 0
+	}
+}
+
+func (ob *OrderBook) getSideTotalQty(side Side) Qty {
+	if side == Bid {
+		return ob.TotalBidQty
+	} else {
+		return ob.TotalAskQty
 	}
 }
 
@@ -121,17 +129,41 @@ func (ob *OrderBook) match(params MatchParams) (MatchResult, error) {
 	remainingQty := params.Qty
 
 	trades := make([]Trade, 0)
+	status := StatusInvalid
+	resting := false
 
 	if params.Type == Market {
+		// check TIF
+		if params.TIF == FOK {
+			if remainingQty > ob.getSideTotalQty(oppositeSide) {
+				// order can not be filled => reject FOK
+				return MatchResult{
+					Trades:       make([]Trade, 0),
+					RemainingQty: remainingQty,
+					Status:       StatusInvalid,
+					Resting:      false,
+				}, errors.New("FOK order can not be filled")
+			}
+		}
+
 		for remainingQty > 0 {
 			bestLevel, err := ob.bestLevel(oppositeSide)
 			if err != nil {
 				return MatchResult{}, err
 			}
 			if bestLevel == nil {
+				// consumed all available liquidity
+				if remainingQty == params.Qty {
+					status = Cancelled // no liquidity found
+				} else {
+					status = PartiallyFilled
+				}
+
 				return MatchResult{
 					Trades:       trades,
 					RemainingQty: remainingQty,
+					Status:       status,
+					Resting:      resting,
 				}, nil
 			}
 
@@ -160,13 +192,42 @@ func (ob *OrderBook) match(params MatchParams) (MatchResult, error) {
 			}
 			trades = append(trades, levelTrades...) // add level trades to global trades
 		}
-	} else {
 
+		// remaining qty is zero => order is fully filled
+		status = Filled
+		// resting is false for Market orders (always)
+	} else {
+		// get all opposite side orders, which are crossable with current order
+
+		level, err := ob.bestLevel(oppositeSide)
+		if err != nil {
+			return MatchResult{}, err
+		}
+
+		for remainingQty > 0 && level != nil {
+			if !crosses(level.price, params.Price, oppositeSide) {
+				// best level is not crossable => finish
+				break
+			}
+
+			headOrder := level.head
+			for remainingQty > 0 && headOrder != nil {
+				// consume order amount
+				tradeQty := min(headOrder.Remaining, remainingQty)
+				remainingQty -= tradeQty
+
+				headOrder = headOrder.next
+			}
+
+			level = level.next // move to next level
+		}
 	}
 
 	return MatchResult{
-		Trades: trades,
+		Trades:       trades,
 		RemainingQty: remainingQty,
+		Status:       status,
+		Resting:      resting,
 	}, nil
 }
 
@@ -195,6 +256,13 @@ func validateMatchParams(params MatchParams) error {
 	}
 	if params.Qty <= 0 {
 		return errors.New("qty is invalid")
+	}
+
+	// validate TIF for order type
+	if params.Type == Market {
+		if params.TIF == GTC {
+			return errors.New("GTC is not allowed for market orders")
+		}
 	}
 
 	return nil
@@ -235,4 +303,15 @@ func fillOrder(ob *OrderBook, level *OrderBookLevel, order *OrderNode, currentID
 	}
 
 	return remainingQty - tradeQty, trade, nil
+}
+
+func crosses(levelPrice, orderPrice Price, oppositeSide Side) bool {
+	if oppositeSide == SideInvalid {
+		panic("INVALID_STATE: side is invalid")
+	}
+	if oppositeSide == Bid {
+		return levelPrice >= orderPrice
+	} else {
+		return levelPrice <= orderPrice
+	}
 }

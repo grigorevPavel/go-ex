@@ -146,4 +146,6 @@ type MatchParams struct {
 type MatchResult struct {
 	Trades       []Trade
 	RemainingQty Qty
+	Status       Status
+	Resting      bool // true if the order is still resting in the order book
 }
