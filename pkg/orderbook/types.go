@@ -12,6 +12,10 @@ type OrderID ID
 
 type TradeID ID
 
+type Timestamp uint64
+
+type Seq uint64
+
 type Side uint8
 
 const (
@@ -56,6 +60,7 @@ type Order struct {
 	Qty       Qty
 	Remaining Qty
 	Status    Status
+	Expiry    Timestamp
 }
 
 type Trade struct {
@@ -100,12 +105,14 @@ type OrderBook struct {
 type OrderRegistry map[OrderID]*OrderNode
 
 type PlaceOrderParams struct {
-	ID    OrderID
-	Side  Side
-	Type  OrderType
-	TIF   TIF
-	Price Price
-	Qty   Qty
+	ID       OrderID
+	Side     Side
+	Type     OrderType
+	TIF      TIF
+	Price    Price
+	Qty      Qty
+	Expiry   Timestamp
+	PostOnly bool
 }
 
 type PlaceOrderResult struct {
@@ -125,9 +132,10 @@ type CancelOrderResult struct {
 }
 
 type ReplaceOrderParams struct {
-	ID    OrderID
-	Qty   Qty
-	Price Price
+	ID     OrderID
+	Qty    Qty
+	Price  Price
+	Expiry Timestamp
 }
 
 type ReplaceOrderResult struct {
@@ -135,12 +143,13 @@ type ReplaceOrderResult struct {
 }
 
 type MatchParams struct {
-	OrderID OrderID
-	Side    Side
-	Type    OrderType
-	TIF     TIF
-	Price   Price
-	Qty     Qty
+	OrderID  OrderID
+	Side     Side
+	Type     OrderType
+	TIF      TIF
+	Price    Price
+	Qty      Qty
+	PostOnly bool
 }
 
 type MatchResult struct {
@@ -148,4 +157,20 @@ type MatchResult struct {
 	RemainingQty Qty
 	Status       Status
 	Resting      bool // true if the order is still resting in the order book
+}
+
+type Cmd struct {
+	Seq
+	WallTime   Timestamp
+	ServerTime Timestamp
+}
+
+type ExpiryHeapNode struct {
+	Expiry  Timestamp
+	OrderID OrderID
+}
+
+type ExpiryHeap struct {
+	nodes   []*ExpiryHeapNode
+	indices map[OrderID]int
 }

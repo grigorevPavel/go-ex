@@ -4,7 +4,7 @@ import "errors"
 
 // --------------------- Public Methods ---------------------
 
-func New() *OrderBook {
+func NewOrderBook() *OrderBook {
 	return &OrderBook{
 		Bids:         make(OrderBookLevels),
 		Asks:         make(OrderBookLevels),
