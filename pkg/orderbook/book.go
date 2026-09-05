@@ -139,7 +139,7 @@ func (ob *OrderBook) match(params MatchParams) (MatchResult, error) {
 				// order can not be filled => reject FOK
 				return MatchResult{
 					Trades:       make([]Trade, 0),
-					RemainingQty: remainingQty,
+					RemainingQty: params.Qty, // return the full order qty
 					Status:       StatusInvalid,
 					Resting:      false,
 				}, errors.New("FOK order can not be filled")
@@ -197,13 +197,62 @@ func (ob *OrderBook) match(params MatchParams) (MatchResult, error) {
 		status = Filled
 		// resting is false for Market orders (always)
 	} else {
-		// get all opposite side orders, which are crossable with current order
+		// check post only flag
+		if params.PostOnly && ob.wouldCross(params) {
+			return MatchResult{
+				Trades:       trades,
+				RemainingQty: params.Qty, // return the full order qty
+				Status:       StatusInvalid,
+				Resting:      false,
+			}, errors.New("post only order can not be filled as market order")
+		}
 
+		if params.TIF == FOK {
+			// dry-run the matching flow without orderbook modification
+
+			// get all opposite side orders, which are crossable with current order
+			level, err := ob.bestLevel(oppositeSide)
+			if err != nil {
+				return MatchResult{}, err
+			}
+
+			for remainingQty > 0 && level != nil {
+				if !crosses(level.price, params.Price, oppositeSide) {
+					// best level is not crossable => finish
+					break
+				}
+
+				headOrder := level.head
+				for remainingQty > 0 && headOrder != nil {
+					// consume order amount
+					tradeQty := min(headOrder.Remaining, remainingQty)
+					remainingQty -= tradeQty
+
+					headOrder = headOrder.next
+				}
+
+				level = level.next // move to next level
+			}
+
+			if remainingQty > 0 {
+				// order can not be fully filled
+				return MatchResult{
+					Trades:       trades,
+					RemainingQty: params.Qty, // return the full order qty
+					Status:       StatusInvalid,
+					Resting:      false,
+				}, errors.New("FOK order can not be filled")
+			}
+		}
+
+		// reset remaining qty to the full order qty
+		remainingQty = params.Qty
+
+		// repeat the matching flow, but with orderbook modification
 		level, err := ob.bestLevel(oppositeSide)
 		if err != nil {
 			return MatchResult{}, err
 		}
-
 		for remainingQty > 0 && level != nil {
 			if !crosses(level.price, params.Price, oppositeSide) {
 				// best level is not crossable => finish
@@ -212,14 +261,30 @@ func (ob *OrderBook) match(params MatchParams) (MatchResult, error) {
 
 			headOrder := level.head
 			for remainingQty > 0 && headOrder != nil {
+				next := headOrder.next // copy next order link (headOrder can be removed in fillOrder)
 				// consume order amount
-				tradeQty := min(headOrder.Remaining, remainingQty)
-				remainingQty -= tradeQty
-
-				headOrder = headOrder.next
+				var trade Trade
+				remainingQty, trade, err = fillOrder(ob, level, headOrder, params.OrderID, remainingQty)
+				if err != nil {
+					panic("INVALID_STATE: " + err.Error())
+				}
+				trades = append(trades, trade)
+				headOrder = next
 			}
 
 			level = level.next // move to next level
+		}
+
+		if remainingQty == 0 {
+			status = Filled
+			// resting = false
+		} else {
+			if remainingQty < params.Qty {
+				status = PartiallyFilled
+			} else {
+				status = Created
+			}
+			resting = true && params.TIF == GTC
 		}
 	}
 
@@ -234,6 +299,19 @@ func (ob *OrderBook) match(params MatchParams) (MatchResult, error) {
 func (ob *OrderBook) allocTradeID() TradeID {
 	ob.NextTradeID++
 	return ob.NextTradeID
+}
+
+func (ob *OrderBook) wouldCross(params MatchParams) bool {
+	if params.Type == Market {
+		return false
+	}
+
+	opSide := getOppositeSide(params.Side)
+	level, _ := ob.bestLevel(opSide)
+	if level == nil {
+		return false
+	}
+	return crosses(level.price, params.Price, opSide)
 }
 
 // ---------------- Utils ----------------
@@ -263,7 +341,15 @@ func validateMatchParams(params MatchParams) error {
 		if params.TIF == GTC {
 			return errors.New("GTC is not allowed for market orders")
 		}
+
+		if params.PostOnly {
+			return errors.New("post only is not allowed for market orders")
+		}
 	}
+
+	if params.PostOnly && params.Type == Limit && params.TIF != GTC {
+		return errors.New("post-only only allowed with GTC")
+	}	
 
 	return nil
 }
