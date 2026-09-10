@@ -13,19 +13,132 @@ func NewOrderBook() *OrderBook {
 		TotalBidQty:  0,
 		TotalAskQty:  0,
 		Registry:     make(OrderRegistry),
+		ExpiryHeap:   NewExpiryHeap(),
 	}
 }
 
 func (ob *OrderBook) PlaceOrder(params PlaceOrderParams) (PlaceOrderResult, error) {
-	return PlaceOrderResult{}, nil
+	// validate order params
+	if _, exists := ob.Registry[params.ID]; exists {
+		return PlaceOrderResult{}, errors.New("order ID is already in registry")
+	}
+
+	matchParams := MatchParams{
+		OrderID:  params.ID,
+		Side:     params.Side,
+		Type:     params.Type,
+		Price:    params.Price,
+		Qty:      params.Qty,
+		TIF:      params.TIF,
+		PostOnly: params.PostOnly,
+	}
+
+	// match order with existing orders in book
+	matchResult, err := ob.match(matchParams)
+	if err != nil {
+		return PlaceOrderResult{}, err
+	}
+
+	// add order to book if order need to be resting
+	if matchResult.Resting {
+		newOrder := Order{
+			ID:        params.ID,
+			Side:      params.Side,
+			Type:      params.Type,
+			Price:     params.Price,
+			Qty:       params.Qty,
+			TIF:       params.TIF,
+			Remaining: matchResult.RemainingQty,
+			Status:    matchResult.Status,
+			Expiry:    params.Expiry,
+		}
+		ob.addOrder(&OrderNode{
+			Order: newOrder,
+		})
+	}
+
+	return PlaceOrderResult{
+		Trades:       matchResult.Trades,
+		RemainingQty: matchResult.RemainingQty,
+		Status:       matchResult.Status,
+		Resting:      matchResult.Resting,
+	}, nil
 }
 
 func (ob *OrderBook) CancelOrder(params CancelOrderParams) (CancelOrderResult, error) {
-	return CancelOrderResult{}, nil
+	order, exists := ob.Registry[params.ID]
+	if !exists {
+		return CancelOrderResult{}, errors.New("order not found")
+	}
+
+	level, err := ob.getLevel(order.Side, order.Price)
+	if err != nil {
+		panic("INVALID_STATE: " + err.Error())
+	}
+
+	order.Order.Status = Cancelled
+	ob.unlinkOrder(level, order)
+
+	return CancelOrderResult{
+		CancelledQty: order.Remaining,
+	}, nil
 }
 
 func (ob *OrderBook) ReplaceOrder(params ReplaceOrderParams) (ReplaceOrderResult, error) {
-	return ReplaceOrderResult{}, nil
+	order, exists := ob.Registry[params.ID]
+	if !exists {
+		return ReplaceOrderResult{}, errors.New("order not found")
+	}
+
+	level, err := ob.getLevel(order.Side, order.Price)
+	if err != nil {
+		panic("INVALID_STATE: " + err.Error())
+	}
+
+	// try to match it with orderbook
+	matchResult, err := ob.match(MatchParams{
+		OrderID:  params.ID,
+		Side:     order.Side,
+		Type:     order.Type,
+		TIF:      order.TIF,
+		Price:    params.Price,
+		Qty:      params.Qty,
+		PostOnly: params.PostOnly,
+	})
+
+	// do not modify odrerbook if new order can not be matched
+	if err != nil {
+		return ReplaceOrderResult{}, err
+	}
+
+	// remove old order from orderbook first
+	ob.unlinkOrder(level, order)
+
+	// add new order to orderbook if it is resting
+	if matchResult.Resting {
+		ob.addOrder(&OrderNode{
+			Order: Order{
+				ID:        params.ID,
+				Side:      order.Side,
+				Type:      order.Type,
+				TIF:       order.TIF,
+				Price:     params.Price,
+				Qty:       params.Qty,
+				Remaining: matchResult.RemainingQty,
+				Status:    matchResult.Status,
+				Expiry:    params.Expiry,
+			},
+		})
+	}
+
+	return ReplaceOrderResult{
+		PlaceOrderResult: PlaceOrderResult{
+			Trades:       matchResult.Trades,
+			RemainingQty: matchResult.RemainingQty,
+			Status:       matchResult.Status,
+			Resting:      matchResult.Resting,
+		},
+	}, nil
 }
 
 func (ob *OrderBook) bestLevel(side Side) (*OrderBookLevel, error) {
@@ -37,6 +150,26 @@ func (ob *OrderBook) bestLevel(side Side) (*OrderBookLevel, error) {
 	} else {
 		return ob.BestAskLevel, nil
 	}
+}
+
+func (ob *OrderBook) getLevel(side Side, price Price) (*OrderBookLevel, error) {
+	if side == SideInvalid {
+		return nil, errors.New("side is invalid")
+	}
+
+	var levels OrderBookLevels
+	if side == Bid {
+		levels = ob.Bids
+	} else {
+		levels = ob.Asks
+	}
+
+	level, exists := levels[price]
+	if !exists {
+		return nil, errors.New("level not found")
+	}
+
+	return level, nil
 }
 
 func (ob *OrderBook) unlinkLevel(level *OrderBookLevel) {
@@ -107,6 +240,149 @@ func (ob *OrderBook) unlinkOrder(level *OrderBookLevel, order *OrderNode) {
 	// if level is empty, remove it
 	if level.ordersCnt == 0 {
 		ob.unlinkLevel(level) // checked ordersCnt == 0
+	}
+
+	// untrack order expiration
+	ob.untrackOrderExpiration(order.Order)
+}
+
+func (ob *OrderBook) linkLevel(level *OrderBookLevel) {
+	if level.side == SideInvalid {
+		panic("INVALID_STATE: side is invalid")
+	}
+
+	var bookSide OrderBookLevels
+	var bestLevel *OrderBookLevel
+	var cmpLess func(a, b *OrderBookLevel) bool
+	if level.side == Bid {
+		bookSide = ob.Bids
+		bestLevel = ob.BestBidLevel
+		cmpLess = func(a, b *OrderBookLevel) bool {
+			return a.price > b.price
+		}
+	} else {
+		bookSide = ob.Asks
+		bestLevel = ob.BestAskLevel
+		cmpLess = func(a, b *OrderBookLevel) bool {
+			return a.price < b.price
+		}
+	}
+
+	// check if level price is already in book
+	if _, exists := bookSide[level.price]; exists {
+		panic("INVALID_STATE: level price is already in book")
+	}
+
+	// add level to book
+	bookSide[level.price] = level
+	level.prev = nil
+	level.next = nil
+
+	// link level to book (go through the book levels and find the correct position)
+	var prevLevel *OrderBookLevel
+	currentLevel := bestLevel
+	for currentLevel != nil && cmpLess(currentLevel, level) {
+		prevLevel = currentLevel
+		currentLevel = currentLevel.next
+	}
+
+	level.prev = prevLevel
+	level.next = currentLevel
+
+	if prevLevel != nil {
+		prevLevel.next = level
+	} else {
+		// change best level pointer
+		// if new level is inserted as the new best level
+		if level.side == Bid {
+			ob.BestBidLevel = level
+		} else {
+			ob.BestAskLevel = level
+		}
+	}
+	if currentLevel != nil {
+		currentLevel.prev = level
+	}
+}
+
+func (ob *OrderBook) linkOrder(level *OrderBookLevel, order *OrderNode) {
+	// verify order.next & order.prev are nil
+	order.next = nil
+	order.prev = nil
+
+	// append order to level
+	if level.head == nil {
+		level.head = order
+		level.tail = order
+	} else {
+		level.tail.next = order
+		order.prev = level.tail
+		level.tail = order
+	}
+
+	// update level stats
+	level.totalQty += order.Remaining
+	level.ordersCnt++
+
+	// update book stats
+	if level.side == Bid {
+		ob.TotalBidQty += order.Remaining
+	} else {
+		ob.TotalAskQty += order.Remaining
+	}
+
+	// register order with ID duplicate check
+	if _, exists := ob.Registry[order.ID]; exists {
+		panic("INVALID_STATE: order ID is already in registry")
+	}
+	ob.Registry[order.ID] = order
+
+	// track order expiration
+	ob.trackOrderExpiration(order.Order)
+}
+
+func (ob *OrderBook) addOrder(order *OrderNode) {
+	var bookSide OrderBookLevels
+	switch order.Side {
+	case SideInvalid:
+		panic("INVALID_STATE: side is invalid")
+	case Bid:
+		bookSide = ob.Bids
+	default:
+		bookSide = ob.Asks
+	}
+
+	// check if level price is already in book
+	level, exists := bookSide[order.Price]
+	if !exists {
+		level = &OrderBookLevel{
+			side:  order.Side,
+			price: order.Price,
+		}
+		ob.linkLevel(level)
+	}
+
+	ob.linkOrder(level, order)
+}
+
+func (ob *OrderBook) trackOrderExpiration(order Order) {
+	if order.Expiry == NoExpiryTimestamp {
+		return
+	}
+
+	node := &ExpiryHeapNode{
+		OrderID: order.ID,
+		Expiry:  order.Expiry,
+	}
+	ob.ExpiryHeap.Push(node)
+}
+
+func (ob *OrderBook) untrackOrderExpiration(order Order) {
+	if order.Expiry == NoExpiryTimestamp {
+		return
+	}
+	if _, err := ob.ExpiryHeap.Remove(order.ID); err != nil {
+		panic("INVALID_STATE: expiry heap out of sync: " + err.Error())
 	}
 }
 
@@ -282,7 +558,14 @@ func (ob *OrderBook) match(params MatchParams) (MatchResult, error) {
 			if remainingQty < params.Qty {
 				status = PartiallyFilled
 			} else {
-				status = Created
+				// 0 amount filled
+				// GTC => created + resting
+				// IOC => cancelled + non-resting
+				if params.TIF == IOC {
+					status = Cancelled
+				} else {
+					status = Created
+				}
 			}
 			resting = true && params.TIF == GTC
 		}
@@ -349,7 +632,7 @@ func validateMatchParams(params MatchParams) error {
 
 	if params.PostOnly && params.Type == Limit && params.TIF != GTC {
 		return errors.New("post-only only allowed with GTC")
-	}	
+	}
 
 	return nil
 }
@@ -383,9 +666,12 @@ func fillOrder(ob *OrderBook, level *OrderBookLevel, order *OrderNode, currentID
 		MakerSide: order.Side,
 	}
 
-	// if order is fully filled, remove it
+	// update order status and remove it from book if it is fully filled
 	if order.Remaining == 0 {
+		order.Status = Filled
 		ob.unlinkOrder(level, order)
+	} else {
+		order.Status = PartiallyFilled
 	}
 
 	return remainingQty - tradeQty, trade, nil
@@ -399,5 +685,16 @@ func crosses(levelPrice, orderPrice Price, oppositeSide Side) bool {
 		return levelPrice >= orderPrice
 	} else {
 		return levelPrice <= orderPrice
+	}
+}
+
+func getOppositeSide(side Side) Side {
+	switch side {
+	case SideInvalid:
+		return SideInvalid
+	case Bid:
+		return Ask
+	default:
+		return Bid
 	}
 }

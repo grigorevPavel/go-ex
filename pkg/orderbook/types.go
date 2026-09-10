@@ -100,6 +100,7 @@ type OrderBook struct {
 	TotalAskQty  Qty
 	Registry     OrderRegistry
 	NextTradeID  TradeID
+	ExpiryHeap   *ExpiryHeap
 }
 
 type OrderRegistry map[OrderID]*OrderNode
@@ -113,6 +114,7 @@ type PlaceOrderParams struct {
 	Qty      Qty
 	Expiry   Timestamp
 	PostOnly bool
+	Cmd      Cmd
 }
 
 type PlaceOrderResult struct {
@@ -128,14 +130,14 @@ type CancelOrderParams struct {
 
 type CancelOrderResult struct {
 	CancelledQty Qty  // remaining quantity of the order that was cancelled
-	Success      bool // true if the order was cancelled successfully
 }
 
 type ReplaceOrderParams struct {
-	ID     OrderID
-	Qty    Qty
-	Price  Price
-	Expiry Timestamp
+	ID       OrderID
+	Qty      Qty
+	Price    Price
+	Expiry   Timestamp
+	PostOnly bool
 }
 
 type ReplaceOrderResult struct {
